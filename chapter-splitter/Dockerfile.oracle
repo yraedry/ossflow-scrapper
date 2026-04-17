@@ -1,0 +1,44 @@
+# Lean image: oracle endpoints + ffmpeg-based splitting only.
+# No torch / cuda / demucs / easyocr / opencv. ~200MB vs ~13GB.
+FROM python:3.10-slim
+
+# ffmpeg is required by OracleSplitter (subprocess calls).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install the shared service kit first (small, stable).
+COPY bjj_service_kit /opt/bjj_service_kit
+RUN pip install --no-cache-dir /opt/bjj_service_kit
+
+# Install lean python deps.
+COPY chapter-splitter/requirements-oracle.txt /tmp/requirements-oracle.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-oracle.txt
+
+# Copy the chapter_splitter package + app entrypoints.
+COPY chapter-splitter /app
+
+# Trim modules that are unused in oracle mode (audio/detection/ocr) but still
+# imported by chapter_splitter/__init__.py via pipeline.py. We replace the
+# package __init__ with a minimal one that only exposes oracle + utils.
+RUN python - <<'PY'
+import pathlib
+init = pathlib.Path("/app/chapter_splitter/__init__.py")
+init.write_text(
+    "# Lean init: only oracle path is supported in this image.\n"
+    "from . import oracle  # noqa: F401\n"
+)
+PY
+
+# Remove heavy submodules so import cycles are impossible at runtime.
+RUN rm -rf \
+    /app/chapter_splitter/audio \
+    /app/chapter_splitter/detection \
+    /app/chapter_splitter/ocr \
+    /app/chapter_splitter/pipeline.py
+
+EXPOSE 8001
+
+CMD ["uvicorn", "app_oracle:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -1,0 +1,8 @@
+# Specific deps only. torch, torchaudio, transformers, sentencepiece, numpy,
+# pydub, fastapi, uvicorn, sse-starlette, pydantic, httpx already in bjj-base.
+TTS
+demucs
+
+# Test-only
+pytest>=7.4
+pytest-asyncio>=0.23
