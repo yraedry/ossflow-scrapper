@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/burn-subs", tags=["burn-subs"])
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
-SUB_SUFFIX = ".ES.srt"
+SUB_SUFFIXES = [".ES.srt", "_ES.srt", "_ESP_DUB.srt"]
 OUT_SUFFIX = "_SUB_ES.mp4"
 
 
@@ -63,8 +63,12 @@ def _collect_targets(root: Path) -> list[tuple[Path, Path]]:
             continue
         if video.name.endswith(OUT_SUFFIX):
             continue
-        srt = video.with_name(video.stem + SUB_SUFFIX)
-        if not srt.exists():
+        srt = next(
+            (video.with_name(video.stem + s) for s in SUB_SUFFIXES
+             if video.with_name(video.stem + s).exists()),
+            None,
+        )
+        if srt is None:
             continue
         out = video.with_name(video.stem + OUT_SUFFIX)
         if out.exists():
@@ -191,7 +195,7 @@ async def start_burn(request: Request) -> Any:
         return JSONResponse(
             status_code=409,
             content={
-                "error": "No videos with matching .ES.srt sidecar found",
+                "error": "No videos with matching ES subtitle sidecar found (.ES.srt / _ES.srt)",
                 "path": str(target),
             },
         )

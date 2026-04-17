@@ -42,6 +42,7 @@ export default function InstructionalHero({
   instructional,
   onProcessAll,
   onEditMetadata,
+  processingAll = false,
 }) {
   const nav = useNavigate()
   const [cacheBust, setCacheBust] = useState(0)
@@ -178,8 +179,11 @@ export default function InstructionalHero({
           </div>
 
           <div className="mt-6 flex flex-wrap gap-2">
-            <Button onClick={onProcessAll}>
-              <Play className="mr-2 h-4 w-4" /> Procesar todo
+            <Button onClick={onProcessAll} disabled={processingAll}>
+              {processingAll
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <Play className="mr-2 h-4 w-4" />}
+              {processingAll ? 'Iniciando…' : 'Procesar todo'}
             </Button>
             <Button
               variant="outline"

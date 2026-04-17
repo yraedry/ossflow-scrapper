@@ -84,7 +84,7 @@ class TranscriptionConfig:
     compute_type: str = "float16"
     device: str = "cuda"
     language: str = "en"
-    batch_size: int = 4
+    batch_size: int = 2
     beam_size: int = 5
     initial_prompt: str = DEFAULT_INITIAL_PROMPT
 

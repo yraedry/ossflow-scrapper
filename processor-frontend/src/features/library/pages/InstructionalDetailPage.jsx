@@ -3,13 +3,15 @@
 // Detalle de instructional: hero (póster + CTAs) + tabs (Capítulos / Pipeline
 // / Metadatos / Logs / Oracle). La pestaña activa se persiste en el search
 // param `?tab=…` para compartir URL.
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, AlertCircle } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toast } from 'sonner'
 import { useInstructional } from '@/features/library/api/useLibrary'
+import { useStartPipeline } from '@/features/pipeline/api/usePipeline'
 import InstructionalHero from '@/features/library/components/InstructionalHero'
 import ChaptersTab from '@/features/library/components/ChaptersTab'
 import MetadataTab from '@/features/library/components/MetadataTab'
@@ -59,9 +61,26 @@ export default function InstructionalDetailPage() {
   }
 
   const { data, isLoading, isError, error } = useInstructional(name)
+  const startPipeline = useStartPipeline()
+  const [starting, setStarting] = useState(false)
 
-  const goProcessAll = () => {
-    if (data?.path) nav(`/pipeline/${encodeURIComponent(data.path)}`)
+  const goProcessAll = async () => {
+    if (!data?.path) return
+    setStarting(true)
+    try {
+      const resp = await startPipeline.mutateAsync({
+        path: data.path,
+        steps: ['chapters', 'subtitles', 'dubbing'],
+        options: {},
+      })
+      const id = resp?.pipeline_id || resp?.id
+      if (id) nav(`/pipelines/${id}`)
+      else toast.error('No se recibió pipeline_id del servidor')
+    } catch (err) {
+      toast.error(`Error iniciando pipeline: ${err.message || 'desconocido'}`)
+    } finally {
+      setStarting(false)
+    }
   }
   const goMetadata = () => setTab('metadata')
 
@@ -126,6 +145,7 @@ export default function InstructionalDetailPage() {
         instructional={data}
         onProcessAll={goProcessAll}
         onEditMetadata={goMetadata}
+        processingAll={starting}
       />
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">

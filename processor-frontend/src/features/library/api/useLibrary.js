@@ -73,6 +73,8 @@ export function useBurnSubs() {
   })
 }
 
+export { useBurnSubs as useBurnSubsVideo }
+
 export function useRenameChapter() {
   const qc = useQueryClient()
   return useMutation({

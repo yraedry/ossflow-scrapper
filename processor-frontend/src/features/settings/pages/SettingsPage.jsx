@@ -22,6 +22,14 @@ import {
   HardDrive,
   Plug,
   Wrench,
+  Trash2,
+  Copy,
+  ScanSearch,
+  Ban,
+  Clock,
+  Route,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -45,6 +53,32 @@ import { useSettings, useUpdateSettings } from '@/features/settings/api/useSetti
 import { useMount, useMountStatus } from '@/features/settings/api/useMount'
 import { useProviders } from '@/features/oracle/api/useOracle'
 import { http } from '@/lib/httpClient'
+import { formatBytes, formatDuration } from '@/lib/format'
+import {
+  useCleanupScan,
+  useCleanupJob,
+  useCleanupApply,
+} from '@/features/cleanup/api/useCleanup'
+import { useDuplicatesScan, useDuplicatesJob } from '@/features/duplicates/api/useDuplicates'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Progress } from '@/components/ui/Progress'
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '@/components/ui/accordion'
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog'
 
 // --- Zod schemas per section ---
 const librarySchema = z.object({
@@ -1202,7 +1236,10 @@ function AdvancedSection({ settings }) {
 }
 
 function MaintenanceSection() {
+  const { data: settings } = useSettings()
+  const libraryPath = settings?.library_path || ''
   const [busy, setBusy] = useState(false)
+
   const clearLocks = async () => {
     setBusy(true)
     try {
@@ -1221,30 +1258,488 @@ function MaintenanceSection() {
   }
 
   return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wrench size={16} />
+            Mantenimiento del sistema
+          </CardTitle>
+          <CardDescription>
+            Operaciones puntuales para recuperar el sistema cuando un proceso queda atascado.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-start justify-between gap-4 rounded-md border border-border/60 p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Limpiar locks de HuggingFace</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Elimina los ficheros <code>.lock</code> residuales del cache del modelo Whisper.
+                Útil si al relanzar un pipeline de subtítulos se queda esperando indefinidamente.
+              </p>
+            </div>
+            <Button onClick={clearLocks} disabled={busy} variant="outline" size="sm">
+              {busy ? <Loader2 className="mr-2 animate-spin" size={14} /> : <Wrench className="mr-2" size={14} />}
+              Limpiar
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <CleanupSubsection libraryPath={libraryPath} />
+      <DuplicatesSubsection libraryPath={libraryPath} />
+    </div>
+  )
+}
+
+// --- Cleanup ---
+
+const CLEANUP_CATEGORY_META = {
+  orphan_srt: { label: 'Subtítulos huérfanos', reason: 'Sin vídeo hermano' },
+  old_dubbed:  { label: 'Doblajes obsoletos',  reason: '_DOBLADO más antiguo que .ES.srt' },
+  temp_files:  { label: 'Ficheros temporales', reason: '.tmp/.part/.bak/~' },
+  empty_dirs:  { label: 'Directorios vacíos',  reason: 'Sin archivos ni subdirectorios' },
+}
+const CLEANUP_ORDER = ['orphan_srt', 'old_dubbed', 'temp_files', 'empty_dirs']
+
+function CleanupSubsection({ libraryPath }) {
+  const [jobId, setJobId] = useState(null)
+  const [selected, setSelected] = useState(() => new Set())
+
+  const scanMut = useCleanupScan()
+  const applyMut = useCleanupApply()
+  const jobQ = useCleanupJob(jobId)
+
+  const job = jobQ.data
+  const status = job?.status
+  const isScanning = ['running', 'pending', 'queued'].includes(status)
+  const result = status === 'completed' ? job?.result : null
+
+  useEffect(() => {
+    if (status === 'failed') toast.error(job?.error || 'El escaneo falló')
+  }, [status, job?.error])
+
+  const sizeByPath = useMemo(() => {
+    const m = new Map()
+    if (!result) return m
+    for (const cat of Object.values(result.categories || {}))
+      for (const it of cat) m.set(it.path, it.size || 0)
+    return m
+  }, [result])
+
+  const selectedBytes = useMemo(() => {
+    let t = 0
+    for (const p of selected) t += sizeByPath.get(p) || 0
+    return t
+  }, [selected, sizeByPath])
+
+  const doScan = async () => {
+    if (!libraryPath) { toast.error('Configura library_path antes de escanear'); return }
+    setSelected(new Set())
+    try {
+      const res = await scanMut.mutateAsync({ path: libraryPath })
+      setJobId(res?.job_id || null)
+    } catch (e) { toast.error(e?.message || 'No se pudo iniciar el escaneo') }
+  }
+
+  const toggle = (p) => setSelected((prev) => {
+    const next = new Set(prev)
+    next.has(p) ? next.delete(p) : next.add(p)
+    return next
+  })
+
+  const toggleCategory = (cat, allChecked) => {
+    const items = result?.categories?.[cat] || []
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allChecked) for (const it of items) next.delete(it.path)
+      else for (const it of items) next.add(it.path)
+      return next
+    })
+  }
+
+  const doApply = async () => {
+    if (selected.size === 0) return
+    try {
+      const res = await applyMut.mutateAsync({ paths: Array.from(selected), dryRun: false })
+      toast.success(`Borrados ${res?.deleted?.length ?? 0} · liberados ${formatBytes(res?.freed_bytes || 0)}`)
+      if (res?.errors?.length) toast.error(`${res.errors.length} errores al borrar`)
+      setSelected(new Set())
+      doScan()
+    } catch (e) { toast.error(e?.message || 'Error aplicando borrado') }
+  }
+
+  return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Wrench size={16} />
-          Mantenimiento
+          <Trash2 size={16} className="text-primary" /> Limpieza de biblioteca
         </CardTitle>
         <CardDescription>
-          Operaciones puntuales para recuperar el sistema cuando un proceso queda atascado.
+          Encuentra artefactos borrables: subtítulos huérfanos, doblajes obsoletos, temporales y carpetas vacías.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-start justify-between gap-4 rounded-md border border-border/60 p-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Limpiar locks de HuggingFace</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Elimina los ficheros <code>.lock</code> residuales del cache del modelo Whisper.
-              Útil si al relanzar un pipeline de subtítulos se queda esperando indefinidamente.
-            </p>
-          </div>
-          <Button onClick={clearLocks} disabled={busy} variant="outline" size="sm">
-            {busy ? <Loader2 className="mr-2 animate-spin" size={14} /> : <Wrench className="mr-2" size={14} />}
-            Limpiar
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={doScan} disabled={isScanning || scanMut.isPending} variant="outline" size="sm">
+            {isScanning || scanMut.isPending
+              ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
+            Escanear
           </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" size="sm" disabled={selected.size === 0 || applyMut.isPending}>
+                {applyMut.isPending
+                  ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  : <Trash2 className="mr-2 h-3.5 w-3.5" />}
+                Borrar selección ({selected.size})
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-red-500" /> Confirmar borrado
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Se eliminarán <strong>{selected.size}</strong> elementos, liberando{' '}
+                  <strong>{formatBytes(selectedBytes)}</strong>. Irreversible.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={doApply}>Borrar</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          {result && (
+            <span className="text-xs text-muted-foreground ml-auto">
+              {result.total_items} items · {formatBytes(result.total_bytes)} detectados
+            </span>
+          )}
         </div>
+
+        {isScanning && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Escaneando…{job?.message ? ` ${job.message}` : ''}</span>
+              <span>{job?.progress != null ? `${Math.round(job.progress)}%` : ''}</span>
+            </div>
+            <Progress value={job?.progress ?? 0} />
+          </div>
+        )}
+
+        {result && (
+          <Accordion type="multiple" defaultValue={CLEANUP_ORDER}>
+            {CLEANUP_ORDER.map((cat) => {
+              const meta = CLEANUP_CATEGORY_META[cat]
+              const items = result.categories?.[cat] || []
+              const allChecked = items.length > 0 && items.every((it) => selected.has(it.path))
+              const someChecked = items.some((it) => selected.has(it.path))
+              const catBytes = items.reduce((s, it) => s + (it.size || 0), 0)
+              return (
+                <AccordionItem key={cat} value={cat}>
+                  <AccordionTrigger>
+                    <div className="flex items-center gap-3">
+                      <span className="font-medium">{meta.label}</span>
+                      <Badge variant="secondary" className="text-[10px]">{items.length}</Badge>
+                      <span className="text-xs text-muted-foreground">{formatBytes(catBytes)}</span>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    {items.length === 0 ? (
+                      <p className="py-2 text-sm text-muted-foreground">Sin items.</p>
+                    ) : (
+                      <>
+                        <div className="mb-2 flex items-center gap-3 border-b pb-2 text-xs text-muted-foreground">
+                          <Checkbox
+                            checked={allChecked}
+                            indeterminate={!allChecked && someChecked}
+                            onCheckedChange={() => toggleCategory(cat, allChecked)}
+                          />
+                          <span>{allChecked ? 'Deseleccionar todo' : 'Seleccionar todo'} · {meta.reason}</span>
+                        </div>
+                        <ul className="divide-y">
+                          {items.map((it) => (
+                            <li key={it.path} className="flex items-center gap-3 py-2 text-sm">
+                              <Checkbox checked={selected.has(it.path)} onCheckedChange={() => toggle(it.path)} />
+                              <span className="flex-1 truncate font-mono text-xs">{it.path}</span>
+                              <span className="w-20 text-right text-xs text-muted-foreground">{formatBytes(it.size)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
+              )
+            })}
+          </Accordion>
+        )}
+
+        {!result && !isScanning && (
+          <p className="text-sm text-muted-foreground">
+            Pulsa <strong>Escanear</strong> para buscar artefactos en{' '}
+            <code className="text-xs">{libraryPath || '(sin library_path)'}</code>.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// --- Duplicados ---
+
+function DuplicatesSubsection({ libraryPath }) {
+  const [jobId, setJobId] = useState(null)
+  const [selections, setSelections] = useState({})
+
+  const scanMut = useDuplicatesScan()
+  const applyMut = useCleanupApply()
+  const jobQ = useDuplicatesJob(jobId)
+
+  const job = jobQ.data
+  const status = job?.status
+  const isScanning = ['running', 'pending', 'queued'].includes(status)
+  const result = status === 'completed' ? job?.result : null
+  const isDeep = !!job?.params?.deep
+
+  useEffect(() => {
+    if (status === 'failed') toast.error(job?.error || 'El escaneo falló')
+  }, [status, job?.error])
+
+  const doScan = async (deep) => {
+    if (!libraryPath) { toast.error('Configura library_path antes de escanear'); return }
+    setSelections({})
+    try {
+      const res = await scanMut.mutateAsync({ path: libraryPath, deep })
+      setJobId(res?.job_id || null)
+    } catch (e) { toast.error(e?.message || 'No se pudo iniciar el escaneo') }
+  }
+
+  const setKeep = (idx, path, group) => setSelections((prev) => {
+    const next = { ...prev }
+    next[idx] = { keep: path, remove: new Set(group.map((e) => e.path).filter((p) => p !== path)) }
+    return next
+  })
+
+  const toggleRemove = (idx, path) => setSelections((prev) => {
+    const cur = prev[idx] || { keep: null, remove: new Set() }
+    const remove = new Set(cur.remove)
+    remove.has(path) ? remove.delete(path) : remove.add(path)
+    return { ...prev, [idx]: { ...cur, remove } }
+  })
+
+  const bulkKeepNewest = () => {
+    if (!result) return
+    const next = {}
+    result.groups.forEach((group, idx) => {
+      const newest = [...group].sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0]
+      const keep = newest?.path || group[0]?.path
+      next[idx] = { keep, remove: new Set(group.map((e) => e.path).filter((p) => p !== keep)) }
+    })
+    setSelections(next)
+  }
+
+  const bulkKeepShortestPath = () => {
+    if (!result) return
+    const next = {}
+    result.groups.forEach((group, idx) => {
+      const shortest = [...group].sort((a, b) => (a.path?.length || 0) - (b.path?.length || 0))[0]
+      const keep = shortest?.path || group[0]?.path
+      next[idx] = { keep, remove: new Set(group.map((e) => e.path).filter((p) => p !== keep)) }
+    })
+    setSelections(next)
+  }
+
+  const pathsToDelete = useMemo(() => {
+    const out = []
+    for (const sel of Object.values(selections))
+      if (sel?.remove) for (const p of sel.remove) out.push(p)
+    return out
+  }, [selections])
+
+  const bytesToFree = useMemo(() => {
+    if (!result) return 0
+    const byPath = new Map()
+    for (const g of result.groups) for (const e of g) byPath.set(e.path, e.size || 0)
+    return pathsToDelete.reduce((s, p) => s + (byPath.get(p) || 0), 0)
+  }, [pathsToDelete, result])
+
+  const doApply = async () => {
+    if (pathsToDelete.length === 0) return
+    try {
+      const res = await applyMut.mutateAsync({ paths: pathsToDelete, dryRun: false })
+      toast.success(`Borrados ${res?.deleted?.length ?? 0} · liberados ${formatBytes(res?.freed_bytes || 0)}`)
+      if (res?.errors?.length) toast.error(`${res.errors.length} errores al borrar`)
+      setSelections({})
+      doScan(isDeep)
+    } catch (e) { toast.error(e?.message || 'Error aplicando borrado') }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Copy size={16} className="text-primary" /> Duplicados
+        </CardTitle>
+        <CardDescription>
+          Detecta vídeos repetidos por tamaño + duración. Modo profundo confirma con md5.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => doScan(false)} disabled={isScanning || scanMut.isPending} variant="outline" size="sm">
+            {(isScanning && !isDeep) || scanMut.isPending
+              ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              : <ScanSearch className="mr-2 h-3.5 w-3.5" />}
+            Scan rápido
+          </Button>
+          <Button onClick={() => doScan(true)} disabled={isScanning || scanMut.isPending} variant="outline" size="sm">
+            {isScanning && isDeep
+              ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              : <ScanSearch className="mr-2 h-3.5 w-3.5" />}
+            Scan profundo (md5)
+          </Button>
+          {isScanning && (
+            <Button onClick={() => setJobId(null)} variant="ghost" size="sm">
+              <Ban className="mr-2 h-3.5 w-3.5" /> Abortar
+            </Button>
+          )}
+        </div>
+
+        {isScanning && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Escaneando{isDeep ? ' (deep)' : ''}…{job?.message ? ` ${job.message}` : ''}</span>
+              <span>{job?.progress != null ? `${Math.round(job.progress)}%` : ''}</span>
+            </div>
+            <Progress value={job?.progress ?? 0} />
+          </div>
+        )}
+
+        {result && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 p-3">
+              <div className="text-sm">
+                <span className="text-foreground">{result.stats.total_videos} vídeos · {result.stats.groups_found} grupos</span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  Espacio desperdiciado: <strong>{formatBytes(result.stats.wasted_bytes)}</strong>
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline" onClick={bulkKeepNewest}>
+                  <Clock className="mr-1.5 h-3.5 w-3.5" /> Más reciente
+                </Button>
+                <Button size="sm" variant="outline" onClick={bulkKeepShortestPath}>
+                  <Route className="mr-1.5 h-3.5 w-3.5" /> Path corto
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" variant="destructive" disabled={pathsToDelete.length === 0 || applyMut.isPending}>
+                      {applyMut.isPending
+                        ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        : <Trash2 className="mr-2 h-3.5 w-3.5" />}
+                      Borrar ({pathsToDelete.length})
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="flex items-center gap-2">
+                        <AlertTriangle className="h-5 w-5 text-red-500" /> Confirmar borrado
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Se eliminarán <strong>{pathsToDelete.length}</strong> duplicados,
+                        liberando <strong>{formatBytes(bytesToFree)}</strong>.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction onClick={doApply}>Borrar</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </div>
+
+            {result.groups.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin duplicados encontrados.</p>
+            ) : (
+              <Accordion type="multiple">
+                {result.groups.map((group, idx) => {
+                  const sel = selections[idx] || { keep: null, remove: new Set() }
+                  const first = group[0] || {}
+                  return (
+                    <AccordionItem key={idx} value={`g-${idx}`}>
+                      <AccordionTrigger>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="font-medium">Grupo #{idx + 1}</span>
+                          <Badge variant="secondary" className="text-[10px]">{group.length} copias</Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatBytes(first.size)} · {formatDuration(first.duration_sec)}
+                          </span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b text-left text-xs text-muted-foreground">
+                                <th className="py-2 pr-2 font-normal">Borrar</th>
+                                <th className="py-2 pr-2 font-normal">Mantener</th>
+                                <th className="py-2 pr-2 font-normal">Path</th>
+                                <th className="py-2 pr-2 text-right font-normal">Size</th>
+                                <th className="py-2 pr-2 text-right font-normal">Duración</th>
+                                {isDeep && <th className="py-2 pr-2 font-normal">md5</th>}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                              {group.map((entry) => (
+                                <tr key={entry.path}>
+                                  <td className="py-2 pr-2">
+                                    <Checkbox
+                                      checked={!!sel.remove?.has(entry.path)}
+                                      disabled={sel.keep === entry.path}
+                                      onCheckedChange={() => toggleRemove(idx, entry.path)}
+                                    />
+                                  </td>
+                                  <td className="py-2 pr-2">
+                                    <input
+                                      type="radio"
+                                      name={`keep-${idx}`}
+                                      checked={sel.keep === entry.path}
+                                      onChange={() => setKeep(idx, entry.path, group)}
+                                      className="h-4 w-4 accent-emerald-500"
+                                    />
+                                  </td>
+                                  <td className="py-2 pr-2 break-all font-mono text-xs">{entry.path}</td>
+                                  <td className="py-2 pr-2 text-right text-xs text-muted-foreground">{formatBytes(entry.size)}</td>
+                                  <td className="py-2 pr-2 text-right text-xs text-muted-foreground">{formatDuration(entry.duration_sec)}</td>
+                                  {isDeep && (
+                                    <td className="py-2 pr-2 font-mono text-xs text-muted-foreground">
+                                      {entry.md5 ? entry.md5.slice(0, 10) : '—'}
+                                    </td>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  )
+                })}
+              </Accordion>
+            )}
+          </>
+        )}
+
+        {!result && !isScanning && (
+          <p className="text-sm text-muted-foreground">
+            Pulsa <strong>Scan rápido</strong> para buscar duplicados en{' '}
+            <code className="text-xs">{libraryPath || '(sin library_path)'}</code>.
+          </p>
+        )}
       </CardContent>
     </Card>
   )

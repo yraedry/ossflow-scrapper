@@ -35,7 +35,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/Badge'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { useRenameChapter, useBurnSubs } from '../api/useLibrary'
+import { useRenameChapter, useBurnSubs, useBurnSubsVideo } from '../api/useLibrary'
 import { useTranslateSrt } from '../api/useSubtitles'
 import { useStartPipeline } from '@/features/pipeline/api/usePipeline'
 import { useOracleData } from '@/features/oracle/api/useOracle'
@@ -98,6 +98,7 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
   const rename = useRenameChapter()
   const startSplit = useStartPipeline()
   const translate = useTranslateSrt()
+  const burnSubs = useBurnSubsVideo()
 
   useEffect(() => {
     if (editing) {
@@ -155,11 +156,12 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
   const [processOpen, setProcessOpen] = useState(false)
   const [selectedSteps, setSelectedSteps] = useState([])
   const [forceRegen, setForceRegen] = useState(false)
+  const [burnAfter, setBurnAfter] = useState(false)
 
-  // When dropdown opens, pre-select missing steps
   const openProcessMenu = () => {
     setSelectedSteps([...missing])
     setForceRegen(false)
+    setBurnAfter(false)
     setProcessOpen(true)
   }
 
@@ -171,17 +173,22 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
 
   const launchProcess = async () => {
     setProcessOpen(false)
-    if (!selectedSteps.length) return
-    // Sort steps in pipeline order
     const order = ['chapters', 'subtitles', 'translate', 'dubbing']
     const sorted = order.filter((s) => selectedSteps.includes(s))
+    if (!sorted.length && !burnAfter) return
     try {
-      const opts = forceRegen ? { force: true } : {}
-      if (hasOracle && sorted.includes('chapters')) opts.mode = 'oracle'
-      const resp = await startSplit.mutateAsync({ path: video.path, steps: sorted, options: opts })
-      const id = resp?.pipeline_id || resp?.id
-      toast.success('Pipeline lanzado')
-      if (id) nav(`/pipelines/${id}`)
+      if (sorted.length) {
+        const opts = forceRegen ? { force: true } : {}
+        if (hasOracle && sorted.includes('chapters')) opts.mode = 'oracle'
+        const resp = await startSplit.mutateAsync({ path: video.path, steps: sorted, options: opts })
+        const id = resp?.pipeline_id || resp?.id
+        toast.success('Pipeline lanzado')
+        if (id) nav(`/pipelines/${id}`)
+      }
+      if (burnAfter) {
+        await burnSubs.mutateAsync({ path: video.path })
+        toast.success('Quema de subs iniciada')
+      }
     } catch (e) {
       toast.error(`Error: ${e?.message || 'desconocido'}`)
     }
@@ -411,7 +418,23 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
                 </button>
                 )
               })}
-              <div className="mt-2 border-t border-zinc-800 pt-2">
+              <div className="mt-2 border-t border-zinc-800 pt-2 space-y-0.5">
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); setBurnAfter((v) => !v) }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer hover:bg-zinc-800 text-zinc-400"
+                >
+                  <span
+                    className={cn(
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                      burnAfter ? 'border-orange-500 bg-orange-500/20' : 'border-zinc-600',
+                    )}
+                  >
+                    {burnAfter && <Check className="h-3 w-3 text-orange-400" />}
+                  </span>
+                  <Flame className="h-3.5 w-3.5" />
+                  Quemar subs ES
+                </button>
                 <button
                   type="button"
                   onClick={(e) => { e.preventDefault(); setForceRegen((v) => !v) }}
@@ -420,9 +443,7 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
                   <span
                     className={cn(
                       'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-                      forceRegen
-                        ? 'border-amber-500 bg-amber-500/20'
-                        : 'border-zinc-600',
+                      forceRegen ? 'border-amber-500 bg-amber-500/20' : 'border-zinc-600',
                     )}
                   >
                     {forceRegen && <Check className="h-3 w-3 text-amber-400" />}
@@ -434,7 +455,7 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
               <Button
                 size="sm"
                 className="mt-2 w-full"
-                disabled={selectedSteps.length === 0 || startSplit.isPending}
+                disabled={(selectedSteps.length === 0 && !burnAfter) || startSplit.isPending}
                 onClick={launchProcess}
               >
                 {startSplit.isPending ? (

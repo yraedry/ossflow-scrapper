@@ -18,6 +18,10 @@ import {
   Search,
   Filter,
   RefreshCw,
+  Scissors,
+  Captions,
+  Mic,
+  Layers,
 } from "lucide-react"
 import {
   usePipelines,
@@ -75,6 +79,69 @@ const STATUS_LABEL = {
 }
 
 const PAGE_SIZE = 25
+
+const STEP_META = {
+  chapters:  { label: "Troceado",   Icon: Scissors, cls: "bg-violet-500/15 text-violet-300 border-violet-500/30" },
+  subtitles: { label: "Subtítulos", Icon: Captions, cls: "bg-sky-500/15 text-sky-300 border-sky-500/30" },
+  dubbing:   { label: "Doblaje",    Icon: Mic,      cls: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
+}
+
+const PIPELINE_TYPE_OPTIONS = [
+  { value: "all",       label: "Todos los tipos" },
+  { value: "global",    label: "Global (todos los pasos)" },
+  { value: "chapters",  label: "Troceado" },
+  { value: "subtitles", label: "Subtítulos" },
+  { value: "dubbing",   label: "Doblaje" },
+]
+
+function extractStepNames(p) {
+  const raw = p.steps || []
+  if (!raw.length) return []
+  return raw.map((s) => (typeof s === "string" ? s : s?.name || "")).filter(Boolean)
+}
+
+function pipelineTypeLabel(stepNames) {
+  if (!stepNames.length) return null
+  const has = (n) => stepNames.includes(n)
+  if (has("chapters") && has("subtitles") && has("dubbing")) return "global"
+  if (stepNames.length === 1) return stepNames[0]
+  return stepNames.join("+")
+}
+
+function StepBadges({ stepNames }) {
+  if (!stepNames.length) return <span className="text-xs text-zinc-600">—</span>
+  const isGlobal = stepNames.includes("chapters") && stepNames.includes("subtitles") && stepNames.includes("dubbing")
+  if (isGlobal) {
+    return (
+      <span className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+        "bg-amber-500/15 text-amber-300 border-amber-500/30"
+      )}>
+        <Layers className="h-3 w-3" /> Global
+      </span>
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {stepNames.map((name) => {
+        const meta = STEP_META[name]
+        if (!meta) return (
+          <span key={name} className="inline-flex items-center rounded-full border border-zinc-700/50 bg-zinc-800/50 px-2 py-0.5 text-[10px] text-zinc-400">
+            {name}
+          </span>
+        )
+        return (
+          <span key={name} className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+            meta.cls,
+          )}>
+            <meta.Icon className="h-3 w-3" /> {meta.label}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
 
 function extractName(path) {
   if (!path) return "—"
@@ -174,6 +241,7 @@ export default function PipelinesListPage() {
   const retry = useRetryPipeline()
 
   const [statusFilter, setStatusFilter] = useState("all")
+  const [typeFilter, setTypeFilter] = useState("all")
   const [search, setSearch] = useState("")
   const [fromDate, setFromDate] = useState("")
   const [toDate, setToDate] = useState("")
@@ -183,6 +251,14 @@ export default function PipelinesListPage() {
   const filtered = useMemo(() => {
     let list = pipelines
     if (statusFilter !== "all") list = list.filter((p) => p.status === statusFilter)
+    if (typeFilter !== "all") {
+      list = list.filter((p) => {
+        const names = extractStepNames(p)
+        const type = pipelineTypeLabel(names)
+        if (typeFilter === "global") return type === "global"
+        return names.includes(typeFilter)
+      })
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       list = list.filter((p) => (p.path || "").toLowerCase().includes(q))
@@ -299,6 +375,25 @@ export default function PipelinesListPage() {
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={typeFilter}
+          onValueChange={(v) => {
+            setTypeFilter(v)
+            setPage(1)
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <Layers className="h-3.5 w-3.5 mr-1.5 text-zinc-500" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PIPELINE_TYPE_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Input
           type="date"
           value={fromDate}
@@ -319,12 +414,13 @@ export default function PipelinesListPage() {
           className="w-[160px]"
           title="Hasta"
         />
-        {(statusFilter !== "all" || search || fromDate || toDate) && (
+        {(statusFilter !== "all" || typeFilter !== "all" || search || fromDate || toDate) && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
               setStatusFilter("all")
+              setTypeFilter("all")
               setSearch("")
               setFromDate("")
               setToDate("")
@@ -354,7 +450,8 @@ export default function PipelinesListPage() {
               <TableHead className="w-[140px]">
                 <SortButton label="Estado" column="status" sort={sort} setSort={setSort} />
               </TableHead>
-              <TableHead className="w-[180px]">Pasos</TableHead>
+              <TableHead className="w-[180px]">Tipo</TableHead>
+              <TableHead className="w-[160px]">Pasos</TableHead>
               <TableHead className="w-[110px]">
                 <SortButton label="Duración" column="duration" sort={sort} setSort={setSort} />
               </TableHead>
@@ -370,6 +467,7 @@ export default function PipelinesListPage() {
                 <TableRow key={`sk-${i}`}>
                   <TableCell><Skeleton className="h-4 w-3/4" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-20" /></TableCell>
+                  <TableCell><Skeleton className="h-5 w-28" /></TableCell>
                   <TableCell><Skeleton className="h-3 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-12" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-16" /></TableCell>
@@ -378,7 +476,7 @@ export default function PipelinesListPage() {
               ))
             ) : paged.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-40 text-center">
+                <TableCell colSpan={7} className="h-40 text-center">
                   <div className="flex flex-col items-center justify-center gap-2 text-zinc-500">
                     <Play className="h-8 w-8 opacity-40" />
                     <p className="text-sm">
@@ -428,6 +526,9 @@ export default function PipelinesListPage() {
                           )}
                           {STATUS_LABEL[status] || status}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <StepBadges stepNames={extractStepNames(p)} />
                       </TableCell>
                       <TableCell>
                         <MiniProgress pipeline={p} />

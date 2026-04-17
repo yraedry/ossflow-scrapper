@@ -7,8 +7,6 @@ import InstructionalOraclePage from './features/oracle/pages/InstructionalOracle
 import PipelinesListPage from './features/pipeline/pages/PipelinesListPage'
 import PipelineDetailPage from './features/pipeline/pages/PipelineDetailPage'
 import SearchPage from './features/search/pages/SearchPage'
-import CleanupPage from './features/cleanup/pages/CleanupPage'
-import DuplicatesPage from './features/duplicates/pages/DuplicatesPage'
 import LogsPage from './features/logs/pages/LogsPage'
 import VoicesPage from './features/voices/pages/VoicesPage'
 import TelegramPage from './features/telegram/pages/TelegramPage'
@@ -34,8 +32,6 @@ const router = createBrowserRouter([
       { path: '/pipelines', element: <PipelinesListPage /> },
       { path: '/pipelines/:id', element: <PipelineDetailPage /> },
       { path: '/search', element: <SearchPage /> },
-      { path: '/cleanup', element: <CleanupPage /> },
-      { path: '/duplicates', element: <DuplicatesPage /> },
       { path: '/logs', element: <LogsPage /> },
       { path: '/voices', element: <VoicesPage /> },
       { path: '/telegram', element: <TelegramPage /> },

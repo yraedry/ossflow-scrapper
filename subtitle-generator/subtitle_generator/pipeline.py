@@ -97,14 +97,10 @@ class SubtitlePipeline:
 
         audio = self._denoise_audio(audio)
 
-        # 2. Transcribe
+        # 2. Transcribe (auto-retry with halved batch_size on CUDA OOM)
         log.info("  Transcribing...")
 
-        result = self._model.transcribe(
-            audio,
-            batch_size=self.t_config.batch_size,
-            language=self.t_config.language,
-        )
+        result = self._transcribe_with_oom_retry(audio)
         segments = result.get("segments", [])
         log.info("  Transcription produced %d raw segments.", len(segments))
 
@@ -366,6 +362,32 @@ class SubtitlePipeline:
                     "score": 0.45,
                 })
         return all_words
+
+    def _transcribe_with_oom_retry(self, audio) -> dict:
+        """Transcribe with automatic batch_size halving on CUDA OOM."""
+        import torch
+
+        batch_size = self.t_config.batch_size
+        while batch_size >= 1:
+            try:
+                return self._model.transcribe(
+                    audio,
+                    batch_size=batch_size,
+                    language=self.t_config.language,
+                )
+            except RuntimeError as exc:
+                if "out of memory" not in str(exc).lower() or batch_size <= 1:
+                    raise
+                log.warning(
+                    "  CUDA OOM with batch_size=%d — retrying with batch_size=%d",
+                    batch_size,
+                    batch_size // 2,
+                )
+                batch_size //= 2
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        raise RuntimeError("CUDA OOM even with batch_size=1")
 
     def _denoise_audio(self, audio):
         """Apply spectral noise reduction to improve VAD and transcription.

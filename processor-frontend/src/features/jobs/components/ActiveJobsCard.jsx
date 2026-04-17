@@ -1,5 +1,6 @@
 // ActiveJobsCard — running background jobs list with progress + elapsed time.
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Activity, Inbox } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -25,6 +26,7 @@ function fmtElapsed(start) {
 
 function JobRow({ job }) {
   const [, force] = useState(0)
+  const nav = useNavigate()
   useEffect(() => {
     const id = setInterval(() => force((n) => n + 1), 1000)
     return () => clearInterval(id)
@@ -32,8 +34,15 @@ function JobRow({ job }) {
   const progress = Number(job.progress ?? 0)
   const start = job.started_at || job.created_at || job.start_time
   const desc = job.description || job.summary || job.path || job.id
+  const href = job.href
   return (
-    <div className="rounded-lg border bg-card/50 p-3">
+    <div
+      className={cn(
+        'rounded-lg border bg-card/50 p-3',
+        href && 'cursor-pointer hover:border-amber-500/50 hover:bg-card/80 transition-colors',
+      )}
+      onClick={href ? () => nav(href) : undefined}
+    >
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary" className="shrink-0 text-[10px] uppercase">
@@ -60,7 +69,9 @@ function JobRow({ job }) {
 
 function pipelineToJob(p) {
   const name = p.path ? p.path.split(/[/\\]/).pop() : p.id
-  const steps = Array.isArray(p.steps) ? p.steps.join(' → ') : ''
+  const rawSteps = Array.isArray(p.steps) ? p.steps : []
+  const stepNames = rawSteps.map((s) => (typeof s === 'string' ? s : s?.name || '')).filter(Boolean)
+  const steps = stepNames.join(' → ')
   return {
     id: `pipeline:${p.id}`,
     type: 'pipeline',
@@ -68,6 +79,7 @@ function pipelineToJob(p) {
     progress: p.progress ?? 0,
     description: steps ? `${name} · ${steps}` : name,
     started_at: p.started_at || p.created_at,
+    href: `/pipelines/${p.id}`,
   }
 }
 
