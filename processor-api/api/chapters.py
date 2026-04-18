@@ -39,6 +39,7 @@ _WS_RE = re.compile(r"\s+")
 _SIDECAR_SUFFIXES = (
     ".srt",
     ".en.srt",
+    ".es.srt",
     ".ES.srt",
     "_ESP_DUB.srt",
     "_DOBLADO.mkv",
@@ -127,8 +128,8 @@ async def rename_season_by_oracle(request: Request) -> Any:
     oracle_map: dict[tuple[int, int], str] = {}
     for vol in oracle.get("volumes", []):
         vol_num = int(vol.get("number", 0))
-        for ch in vol.get("chapters", []):
-            ep_num = int(ch.get("number", 0))
+        for idx, ch in enumerate(vol.get("chapters", []), start=1):
+            ep_num = int(ch.get("number", idx))
             title = ch.get("title", "").strip()
             if title:
                 oracle_map[(vol_num, ep_num)] = title

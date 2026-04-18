@@ -150,13 +150,14 @@ class DubbingPipeline:
                 video_path = Path(dirpath) / video_name
                 base = video_path.with_suffix("")
 
-                # Look for Spanish dubbed SRT first, then ESP, then ES
-                srt_path = base.parent / f"{base.name}_ESP_DUB.srt"
-                if not srt_path.exists():
-                    srt_path = base.parent / f"{base.name}_ESP.srt"
-                if not srt_path.exists():
-                    srt_path = base.parent / f"{base.name}_ES.srt"
-                if not srt_path.exists():
+                # Look for Spanish SRT: dubbed variants first, then standard .es.srt
+                srt_path = None
+                for _sfx in ("_ESP_DUB.srt", "_ESP.srt", "_ES.srt", ".es.srt", ".ES.srt"):
+                    _candidate = base.parent / f"{base.name}{_sfx}"
+                    if _candidate.exists():
+                        srt_path = _candidate
+                        break
+                if srt_path is None:
                     logger.warning("No SRT found for %s, skipping", video_name)
                     continue
 

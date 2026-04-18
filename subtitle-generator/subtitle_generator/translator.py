@@ -74,7 +74,7 @@ class _BaseTranslator:
         """Translate ``src_path`` SRT, writing ``dst_path`` (default ``*_ES.srt``)."""
         src_path = Path(src_path)
         if dst_path is None:
-            dst_path = src_path.with_name(f"{src_path.stem}_ES.srt")
+            dst_path = src_path.with_name(f"{src_path.stem}.es.srt")
         else:
             dst_path = Path(dst_path)
 

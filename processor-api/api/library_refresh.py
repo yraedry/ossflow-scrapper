@@ -52,9 +52,10 @@ def _video_flags(video_path: Path) -> dict[str, Any]:
     """Re-stat sidecars for one video. Returns fields to merge onto the cached entry."""
     folder = video_path.parent
     base = video_path.stem
-    has_srt = (folder / f"{base}.srt").exists()
+    has_srt = (folder / f"{base}.en.srt").exists() or (folder / f"{base}.srt").exists()
     has_es_srt = (
-        (folder / f"{base}.ES.srt").exists()
+        (folder / f"{base}.es.srt").exists()
+        or (folder / f"{base}.ES.srt").exists()
         or (folder / f"{base}_ES.srt").exists()
         or (folder / f"{base}_ESP_DUB.srt").exists()
     )

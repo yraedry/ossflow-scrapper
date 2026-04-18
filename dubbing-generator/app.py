@@ -31,7 +31,7 @@ def _resolve_input(path: Path) -> Path:
 def _resolve_srt_for(video_path: Path) -> Optional[Path]:
     """Locate the Spanish SRT next to a video (prefers _ESP_DUB, then _ESP)."""
     base = video_path.with_suffix("")
-    for suffix in ("_ESP_DUB.srt", "_ESP.srt", "_ES.srt"):
+    for suffix in ("_ESP_DUB.srt", "_ESP.srt", "_ES.srt", ".es.srt", ".ES.srt"):
         candidate = base.parent / f"{base.name}{suffix}"
         if candidate.exists():
             return candidate

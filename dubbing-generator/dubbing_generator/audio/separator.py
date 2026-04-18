@@ -52,15 +52,21 @@ class AudioSeparator:
             )
 
             # Run Demucs
-            subprocess.run(
+            result = subprocess.run(
                 [
                     "demucs", "-n", "htdemucs",
                     "--two-stems=vocals",
                     "-o", str(separated_dir),
                     str(temp_audio_wav),
                 ],
-                check=True,
+                capture_output=True,
+                text=True,
             )
+            if result.returncode != 0:
+                logger.error("Demucs stderr:\n%s", result.stderr)
+                logger.error("Demucs stdout:\n%s", result.stdout)
+                raise subprocess.CalledProcessError(result.returncode, "demucs", result.stderr)
+
 
             # Demucs outputs no_vocals.wav for the background stem
             demucs_out = separated_dir / "htdemucs" / temp_audio_name / "no_vocals.wav"

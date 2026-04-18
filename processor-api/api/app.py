@@ -288,9 +288,10 @@ def scan_library(root_path: str) -> list[dict]:
             base = vpath.stem
 
             # Check processing state
-            has_srt = (dp / f"{base}.srt").exists()
+            has_srt = (dp / f"{base}.en.srt").exists() or (dp / f"{base}.srt").exists()
             has_es_srt = (
-                (dp / f"{base}.ES.srt").exists()
+                (dp / f"{base}.es.srt").exists()
+                or (dp / f"{base}.ES.srt").exists()
                 or (dp / f"{base}_ES.srt").exists()
                 or (dp / f"{base}_ESP_DUB.srt").exists()
             )

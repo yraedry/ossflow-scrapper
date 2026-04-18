@@ -635,6 +635,30 @@ async def _run_step(
             log.warning("Failed to compute step diff: %s", exc)
 
 
+async def _flush_gpu_after_step(pipeline: PipelineInfo, queue: asyncio.Queue) -> None:
+    """Restart subtitle-generator to free VRAM after a GPU-heavy step."""
+    import httpx
+    subs_url = subs_client().base_url
+    log.info("[pipeline:%s] Flushing GPU (restarting subtitle-generator)…", pipeline.pipeline_id)
+    await _emit(pipeline, queue, {"type": "log", "message": "Liberando VRAM…"})
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(f"{subs_url}/maintenance/restart")
+    except Exception:
+        pass  # service kills itself before responding
+    for _ in range(30):
+        await asyncio.sleep(2.0)
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(f"{subs_url}/health")
+                if r.status_code == 200:
+                    log.info("[pipeline:%s] subtitle-generator healthy again.", pipeline.pipeline_id)
+                    return
+        except Exception:
+            pass
+    log.warning("[pipeline:%s] subtitle-generator did not recover in 60s after GPU flush.", pipeline.pipeline_id)
+
+
 async def _run_pipeline(pipeline: PipelineInfo, queue: asyncio.Queue) -> None:
     """Execute all steps in a pipeline sequentially."""
     pipeline.status = StepStatus.RUNNING
@@ -654,6 +678,9 @@ async def _run_pipeline(pipeline: PipelineInfo, queue: asyncio.Queue) -> None:
                 })
                 return
             success = await _run_step(pipeline, i, queue)
+            # After subtitles/dubbing step, flush GPU before next step to prevent OOM
+            if success and step.name in ("subtitles", "dubbing"):
+                await _flush_gpu_after_step(pipeline, queue)
             if not success:
                 for j in range(i + 1, len(pipeline.steps)):
                     pipeline.steps[j].status = StepStatus.SKIPPED
@@ -782,6 +809,34 @@ def _total_video_duration(path_str: str) -> Optional[float]:
     return total if total > 0 else None
 
 
+@router.post("/flush-gpu")
+async def flush_gpu():
+    """Restart subtitle-generator to free VRAM, then wait until healthy (max 60s)."""
+    import httpx
+
+    subs_url = subs_client().base_url
+
+    # Fire restart — service dies before responding, so ignore errors
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(f"{subs_url}/maintenance/restart")
+    except Exception:
+        pass  # expected: service kills itself mid-response
+
+    # Poll /health until up (max 60s)
+    for _ in range(30):
+        await asyncio.sleep(2.0)
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(f"{subs_url}/health")
+                if r.status_code == 200:
+                    return {"ok": True, "message": "subtitle-generator restarted and healthy"}
+        except Exception:
+            pass
+
+    return JSONResponse({"ok": False, "message": "subtitle-generator did not recover in 60s"}, status_code=503)
+
+
 @router.get("/eta")
 async def pipeline_eta(
     steps: str = "",
@@ -873,6 +928,23 @@ async def create_pipeline(request: Request):
             {"error": f"Invalid steps: {invalid}. Valid: {sorted(VALID_STEPS)}"},
             status_code=422,
         )
+
+    # Reject if a GPU step is already running (prevents VRAM OOM)
+    GPU_STEPS = {"subtitles", "dubbing"}
+    requested_gpu = GPU_STEPS.intersection(steps_raw)
+    if requested_gpu:
+        for p in _pipelines.values():
+            if p.status == StepStatus.RUNNING:
+                active_gpu = GPU_STEPS.intersection(s.name for s in p.steps)
+                if active_gpu:
+                    return JSONResponse(
+                        {
+                            "error": "GPU ocupada",
+                            "detail": f"Pipeline {p.pipeline_id} ya está usando GPU ({', '.join(sorted(active_gpu))}). Espera a que termine.",
+                            "active_pipeline_id": p.pipeline_id,
+                        },
+                        status_code=409,
+                    )
 
     pipeline_id = str(uuid.uuid4())[:8]
     steps = [StepInfo(name=s) for s in steps_raw]

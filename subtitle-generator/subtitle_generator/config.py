@@ -133,7 +133,7 @@ class SubtitleConfig:
     max_chars_per_second: float = 60.0  # very relaxed — alignment jitter can produce high CPS on short segs
 
     # Silence filter threshold (RMS in dBFS below which a segment is silence)
-    silence_threshold_db: float = -55.0  # more tolerant — soft-spoken instructors
+    silence_threshold_db: float = -40.0  # title cards / silence typically above -40 dBFS
 
     # Synthetic score filter: ratio of words with exact 0.5 score to trigger stricter filtering
     synthetic_score_ratio: float = 0.80  # only flag near-fully-synthetic segments

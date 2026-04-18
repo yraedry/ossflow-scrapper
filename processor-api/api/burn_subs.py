@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/burn-subs", tags=["burn-subs"])
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
-SUB_SUFFIXES = [".ES.srt", "_ES.srt", "_ESP_DUB.srt"]
+SUB_SUFFIXES = [".es.srt", ".ES.srt", "_ES.srt", "_ESP_DUB.srt"]
 OUT_SUFFIX = "_SUB_ES.mp4"
 
 

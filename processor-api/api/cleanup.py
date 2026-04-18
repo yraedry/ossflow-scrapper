@@ -137,7 +137,9 @@ def _scan_tree(root: Path) -> dict[str, Any]:
             if suffix in VIDEO_EXTS and Path(fname).stem.endswith("_DOBLADO"):
                 # Buscar .ES.srt hermano cuyo stem sea el del video SIN _DOBLADO
                 orig_stem = Path(fname).stem[: -len("_DOBLADO")]
-                es_srt = dir_p / f"{orig_stem}.ES.srt"
+                es_srt = dir_p / f"{orig_stem}.es.srt"
+                if not es_srt.exists():
+                    es_srt = dir_p / f"{orig_stem}.ES.srt"
                 if es_srt.exists():
                     fstat = _safe_stat(fpath)
                     sstat = _safe_stat(es_srt)

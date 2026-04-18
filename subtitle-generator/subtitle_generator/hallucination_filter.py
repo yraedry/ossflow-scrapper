@@ -167,6 +167,11 @@ class HallucinationFilter:
                 self.stats["garbage_text"] += 1
                 log.debug("Dropped garbage (all-caps short): %r", text[:80])
                 continue
+            # Single word repeated 4+ times — classic Whisper hallucination on silence/noise
+            if len(words) >= 4 and len(set(w.lower() for w in words)) == 1:
+                self.stats["garbage_text"] += 1
+                log.debug("Dropped garbage (single word repeated): %r", text[:80])
+                continue
             result.append(seg)
         return result
 

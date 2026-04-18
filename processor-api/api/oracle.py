@@ -209,7 +209,32 @@ async def _download_poster_if_missing(folder: Path, poster_url: str | None) -> s
                         break
             dest = folder / f"poster.{ext}"
             tmp = folder / f"poster.{ext}.tmp"
-            tmp.write_bytes(r.content)
+            raw = r.content
+            # Crop to 3:4 portrait if image is square or landscape
+            try:
+                from PIL import Image as _Img
+                import io as _io
+                img = _Img.open(_io.BytesIO(raw))
+                w, h = img.size
+                target_h = int(w * 4 / 3)
+                if h < target_h:
+                    # Image is wider than 3:4 — crop width to fit 3:4
+                    target_w = int(h * 3 / 4)
+                    left = (w - target_w) // 2
+                    img = img.crop((left, 0, left + target_w, h))
+                elif h > target_h:
+                    # Image is taller than 3:4 — crop from top (title usually at top)
+                    img = img.crop((0, 0, w, target_h))
+                # Only save if we actually changed proportions
+                if (w, h) != img.size:
+                    buf = _io.BytesIO()
+                    fmt = "JPEG" if ext in ("jpg", "jpeg") else ext.upper()
+                    img.save(buf, format=fmt, quality=90)
+                    raw = buf.getvalue()
+                    log.info("poster cropped from %dx%d to %dx%d", w, h, *img.size)
+            except Exception as _crop_exc:
+                log.debug("poster crop skipped: %s", _crop_exc)
+            tmp.write_bytes(raw)
             os.replace(tmp, dest)
             log.info("downloaded poster to %s", dest)
             return dest.name

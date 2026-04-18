@@ -121,6 +121,12 @@ async def clear_locks() -> dict:
     return await _post("/maintenance/clear-hf-locks", {}, timeout=15.0)
 
 
+@router.post("/maintenance/restart")
+async def restart_subtitle_service() -> dict:
+    """Proxy graceful restart to subtitle-generator (releases VRAM, Docker restarts container)."""
+    return await _post("/maintenance/restart", {}, timeout=15.0)
+
+
 def _key_for_provider(provider: str, override: Optional[str]) -> Optional[str]:
     if override:
         return override

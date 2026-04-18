@@ -28,7 +28,7 @@ ENV PATH="/opt/venv/bin:$PATH" VIRTUAL_ENV=/opt/venv
 RUN --mount=type=cache,target=/root/.cache/pip,id=bjj-pip,sharing=locked \
     pip install --upgrade pip setuptools wheel \
  && pip install --extra-index-url https://download.pytorch.org/whl/cu124 \
-        torch torchaudio \
+        "torch==2.5.1" "torchaudio==2.5.1" \
  && pip install \
         transformers sentencepiece \
         numpy pydub \

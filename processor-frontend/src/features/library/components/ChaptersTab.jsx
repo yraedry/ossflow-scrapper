@@ -40,6 +40,7 @@ import { useTranslateSrt } from '../api/useSubtitles'
 import { useStartPipeline } from '@/features/pipeline/api/usePipeline'
 import { useOracleData } from '@/features/oracle/api/useOracle'
 import SubtitleValidationDialog from './SubtitleValidationDialog'
+import SeasonValidationDialog from './SeasonValidationDialog'
 import AudioAnalysisDialog from './AudioAnalysisDialog'
 import useAudioAnalysis from '../stores/useAudioAnalysis'
 import VideoReviewDialog from '@/components/media/VideoReviewDialog'
@@ -224,10 +225,10 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
 
   return (
     <tr className="border-t border-zinc-800/60 hover:bg-zinc-900/40">
-      <td className="px-3 py-2 font-mono text-xs text-zinc-500">
+      <td className="px-3 py-2 font-mono text-xs text-zinc-500 shrink-0 whitespace-nowrap">
         {seasonEpisodeCode(video.filename)}
       </td>
-      <td className="px-3 py-2 min-w-0">
+      <td className="px-3 py-2 max-w-xs">
         {editing ? (
           <div className="flex items-center gap-2">
             <Input
@@ -263,7 +264,7 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
             {err && <span className="text-[11px] text-red-400">{err}</span>}
           </div>
         ) : (
-          <div className="group flex items-center gap-2">
+          <div className="group flex min-w-0 items-center gap-2">
             <span
               className={cn(
                 'truncate text-sm text-zinc-100',
@@ -284,7 +285,7 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
           </div>
         )}
       </td>
-      <td className="px-3 py-2 text-xs tabular-nums text-zinc-500">
+      <td className="px-3 py-2 text-xs tabular-nums text-zinc-500 shrink-0 whitespace-nowrap">
         {fmtDuration(video.duration)}
       </td>
       <td className="px-3 py-2">
@@ -314,7 +315,7 @@ function ChapterRow({ video, instructionalName, onNext, hasOracle }) {
           <StatusBadge ok={hasDub} Icon={Mic} label="Doblaje ES" />
         </div>
       </td>
-      <td className="px-3 py-2 text-right">
+      <td className="px-3 py-2 text-right shrink-0 whitespace-nowrap">
         <div className="flex items-center justify-end gap-1">
           <Button
             size="sm"
@@ -544,6 +545,31 @@ function SeasonPipelineButton({ seasonPath, steps, label, Icon, title, hasOracle
   )
 }
 
+function SeasonValidateButton({ season, list }) {
+  const [open, setOpen] = useState(false)
+  const hasSubs = list.some((v) => v.has_subtitles_en)
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={!hasSubs}
+        onClick={(e) => { e.stopPropagation(); setOpen(true) }}
+        title={hasSubs ? 'Validar subtítulos EN de toda la Season' : 'Sin subtítulos EN que validar'}
+      >
+        <ShieldCheck className="mr-1 h-3 w-3" />
+        Validar
+      </Button>
+      <SeasonValidationDialog
+        open={open}
+        onOpenChange={setOpen}
+        season={season}
+        videos={list}
+      />
+    </>
+  )
+}
+
 function SeasonRenameOracleButton({ seasonPath, oracle, instructionalName }) {
   const rename = useRenameByOracle()
   const onClick = async (e) => {
@@ -691,6 +717,7 @@ export default function ChaptersTab({ instructional }) {
                       Icon={Captions}
                       title="Generar subtítulos EN en toda la Season"
                     />
+                    <SeasonValidateButton season={season} list={list} />
                     <SeasonPipelineButton
                       seasonPath={seasonPath}
                       steps={['translate']}
@@ -716,11 +743,11 @@ export default function ChaptersTab({ instructional }) {
               <table className="w-full">
                 <thead className="bg-zinc-900/40 text-xs uppercase tracking-wide text-zinc-500">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium">Código</th>
+                    <th className="px-3 py-2 text-left font-medium w-20">Código</th>
                     <th className="px-3 py-2 text-left font-medium">Título</th>
-                    <th className="px-3 py-2 text-left font-medium">Duración</th>
-                    <th className="px-3 py-2 text-left font-medium">Estado</th>
-                    <th className="px-3 py-2 text-right font-medium">Acción</th>
+                    <th className="px-3 py-2 text-left font-medium w-20 whitespace-nowrap">Duración</th>
+                    <th className="px-3 py-2 text-left font-medium w-28">Estado</th>
+                    <th className="px-3 py-2 text-right font-medium w-auto whitespace-nowrap">Acción</th>
                   </tr>
                 </thead>
                 <tbody>

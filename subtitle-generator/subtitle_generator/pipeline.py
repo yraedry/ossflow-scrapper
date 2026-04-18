@@ -77,7 +77,8 @@ class SubtitlePipeline:
         import torch
         import whisperx
 
-        output_srt = video_path.with_suffix(".srt")
+        lang_code = self.t_config.language.lower()
+        output_srt = video_path.with_name(video_path.stem + f".{lang_code}.srt")
 
         if output_srt.exists() and not force:
             log.debug("Skipping (SRT exists): %s", video_path.name)
@@ -301,10 +302,9 @@ class SubtitlePipeline:
             wav_io.write(buf, sample_rate, chunk_int16)
             buf.seek(0)
 
-            segments_iter, info = fw_model.transcribe(
-                buf,
+            transcribe_kwargs = dict(
                 language=self.t_config.language,
-                beam_size=self.t_config.beam_size,
+                beam_size=1,  # conservative — model already occupies VRAM during gap-fill
                 initial_prompt=self.t_config.initial_prompt,
                 hotwords=hotwords,
                 condition_on_previous_text=False,
@@ -312,6 +312,27 @@ class SubtitlePipeline:
                 log_prob_threshold=-0.5,
                 word_timestamps=True,
             )
+            try:
+                segments_iter, info = fw_model.transcribe(buf, **transcribe_kwargs)
+                segments_iter = list(segments_iter)
+            except RuntimeError as exc:
+                if "out of memory" not in str(exc).lower():
+                    raise
+                import torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                buf.seek(0)
+                try:
+                    transcribe_kwargs["beam_size"] = 1
+                    segments_iter, info = fw_model.transcribe(buf, **transcribe_kwargs)
+                    segments_iter = list(segments_iter)
+                    log.warning("  Gap-fill OOM — retried with beam_size=1 for gap %.1f-%.1f",
+                                gap_start, gap_end)
+                except RuntimeError:
+                    log.warning("  Gap-fill OOM on retry — skipping gap %.1f-%.1f",
+                                gap_start, gap_end)
+                    continue
 
             for seg in segments_iter:
                 text = seg.text.strip()
@@ -450,6 +471,8 @@ class SubtitlePipeline:
         skipped = 0
         errors = 0
 
+        import torch
+
         for vpath in video_files:
             try:
                 result = self.process_file(vpath, force=force)
@@ -460,7 +483,7 @@ class SubtitlePipeline:
             except Exception as e:
                 errors += 1
                 log.error("Error processing %s: %s", vpath.name, e, exc_info=True)
-                import torch
+            finally:
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()

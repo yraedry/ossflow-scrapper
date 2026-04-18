@@ -135,13 +135,22 @@ def _run_subtitle_generator(req: RunRequest, emit) -> None:
             f"starting subtitle-generator on {input_path}"
             + (" (force overwrite)" if force else "")
         }))
+        import gc
+        import torch
+
         pipeline = SubtitlePipeline(t_config, s_config)
         pipeline.load_models()
-        if input_path.is_file():
-            pipeline.process_file(input_path, force=force)
-        else:
-            pipeline.process_directory(input_path, force=force)
-        emit(JobEvent(type="progress", data={"pct": 100}))
+        try:
+            if input_path.is_file():
+                pipeline.process_file(input_path, force=force)
+            else:
+                pipeline.process_directory(input_path, force=force)
+            emit(JobEvent(type="progress", data={"pct": 100}))
+        finally:
+            del pipeline
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 
 def _build_translator_with_fallback(opts: dict):
@@ -213,7 +222,7 @@ def _run_translate_directory(req: RunRequest, emit) -> None:
     else:
         raise FileNotFoundError(f"input_path not found: {root}")
 
-    srts = [s for s in srts if not s.stem.endswith("_ES") and not s.stem.endswith("_ESP_DUB")]
+    srts = [s for s in srts if not s.name.endswith(".es.srt") and not s.stem.endswith("_ES") and not s.stem.endswith("_ESP_DUB")]
 
     with emit_logs(emit, level=level):
         primary, fallback = _build_translator_with_fallback(opts)
@@ -230,7 +239,7 @@ def _run_translate_directory(req: RunRequest, emit) -> None:
             return
 
         for i, srt in enumerate(srts, 1):
-            out = srt.with_name(f"{srt.stem}_ES.srt")
+            out = srt.with_name(f"{srt.stem}.es.srt")
             if out.exists():
                 emit(JobEvent(type="log", data={"message": f"skip (exists): {out.name}"}))
             else:
@@ -312,7 +321,9 @@ def restart_service() -> dict:
     Útil para liberar VRAM tras un OOM o cancelación de job.
     """
     import threading, os, signal
-    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+    # Kill PID 1 (uvicorn reloader / entrypoint) so Docker restarts the container.
+    # Killing only os.getpid() (the worker) leaves the reloader alive without a worker.
+    threading.Timer(0.5, lambda: os.kill(1, signal.SIGTERM)).start()
     return {"ok": True, "message": "Reiniciando subtitle-generator…"}
 
 
