@@ -1,0 +1,23 @@
+services:
+  ossflow-scrapper:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: ossflow-scrapper
+    ports:
+      - "8005:8001"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ossflow_net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+networks:
+  ossflow_net:
+    external: true
