@@ -1,9 +1,9 @@
-# Lean image: oracle endpoints + ffmpeg-based splitting only.
+# Lean image: scrapper endpoints + ffmpeg-based splitting only.
 # No torch / cuda / demucs / easyocr / opencv. ~200MB vs ~13GB.
 FROM python:3.10-slim
 
 # git is required to install ossflow-service-kit from GitHub.
-# ffmpeg is required by OracleSplitter (subprocess calls).
+# ffmpeg is required by ChapterSplitter (subprocess calls).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
@@ -18,8 +18,10 @@ RUN pip install --no-cache-dir \
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Copy the chapter_splitter package + app entrypoint.
-COPY chapter_splitter /app/chapter_splitter
+# Copy the scrapper packages + app entrypoint.
+COPY scrapper /app/scrapper
+COPY splitting /app/splitting
+COPY shared /app/shared
 COPY app.py /app/app.py
 
 EXPOSE 8001

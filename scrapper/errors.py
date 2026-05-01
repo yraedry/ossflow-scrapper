@@ -1,20 +1,20 @@
-class OracleError(Exception):
-    """Base class for all oracle-related errors."""
+class ScraperError(Exception):
+    """Base class for all scrapper-related errors."""
 
 
-class ProviderNotFoundError(OracleError):
+class ProviderNotFoundError(ScraperError):
     """No provider matches the given id or URL domain."""
 
 
-class ProviderSearchError(OracleError):
+class ProviderSearchError(ScraperError):
     """search() failed (network, parse, no results with min score)."""
 
 
-class ProviderScrapeError(OracleError):
+class ProviderScrapeError(ScraperError):
     """scrape() failed (network, HTML structure unexpected)."""
 
 
-class ProviderTimeoutError(OracleError):
+class ProviderTimeoutError(ScraperError):
     """HTTP timeout during search or scrape."""
 
 
@@ -22,5 +22,5 @@ class HTMLChangedError(ProviderScrapeError):
     """Expected selectors not found — site structure likely changed."""
 
 
-class OracleValidationError(OracleError):
+class ScraperValidationError(ScraperError):
     """Scraped data failed pydantic validation."""
