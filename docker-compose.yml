@@ -1,8 +1,6 @@
 services:
   ossflow-scrapper:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
+    image: ghcr.io/yraedry/ossflow-scrapper:latest
     container_name: ossflow-scrapper
     ports:
       - "8005:8001"

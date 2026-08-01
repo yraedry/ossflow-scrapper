@@ -31,13 +31,21 @@ _BACKOFF_BASE_S = 1.0
 def _http_get_with_retry(
     client: httpx.Client, url: str, *, params: dict | None = None
 ) -> httpx.Response:
-    """GET with exponential backoff on timeouts and 5xx. Raises last error."""
+    """GET with exponential backoff on timeouts, 429 and 5xx.
+
+    On 429, honors ``Retry-After`` (seconds or HTTP-date) when present,
+    falling back to the exponential backoff otherwise. Returns the last
+    response as-is (without raising) if all attempts are exhausted, so
+    callers keep surfacing the real status code to the user.
+    """
     last_exc: Exception | None = None
+    last_resp: httpx.Response | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             resp = client.get(url, params=params)
-            if resp.status_code < 500:
+            if resp.status_code < 500 and resp.status_code != 429:
                 return resp
+            last_resp = resp
             last_exc = httpx.HTTPStatusError(
                 f"server returned {resp.status_code}",
                 request=resp.request,
@@ -50,12 +58,28 @@ def _http_get_with_retry(
             break
         if attempt < _MAX_ATTEMPTS:
             sleep_s = _BACKOFF_BASE_S * (2 ** (attempt - 1))
+            if last_resp is not None and last_resp.status_code == 429:
+                retry_after = _parse_retry_after(last_resp.headers.get("Retry-After"))
+                if retry_after is not None:
+                    sleep_s = retry_after
             logger.warning(
                 "GET %s attempt %d/%d failed (%s); retrying in %.1fs",
                 url, attempt, _MAX_ATTEMPTS, type(last_exc).__name__, sleep_s,
             )
             time.sleep(sleep_s)
+    if last_resp is not None:
+        return last_resp
     raise last_exc  # type: ignore[misc]
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse ``Retry-After`` as delay-seconds. HTTP-date form is ignored."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value.strip()))
+    except ValueError:
+        return None
 _SEARCH_ENDPOINT = (
     "https://bjjfanatics-msigw.ondigitalocean.app/v4/products/search"
 )
@@ -277,6 +301,11 @@ class BJJFanaticsProvider:
                 f"network error scraping {url}: {e}"
             ) from e
 
+        if resp.status_code == 429:
+            raise ProviderScrapeError(
+                f"scrape {url} returned HTTP 429 (rate limited by bjjfanatics.com "
+                f"after {_MAX_ATTEMPTS} attempts) - wait and retry later"
+            )
         if resp.status_code >= 400:
             raise ProviderScrapeError(
                 f"scrape {url} returned HTTP {resp.status_code}"
