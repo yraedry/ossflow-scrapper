@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json as _json
 import logging
 import re
+import subprocess
 import threading
 import time
 from difflib import SequenceMatcher
@@ -68,29 +70,96 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_S = 1.0
 
 
+class _CurlResponse:
+    """Minimal httpx.Response-alike backing the ``curl`` subprocess path.
+
+    Only implements what this module actually reads off a response:
+    ``status_code``, ``text`` and ``.json()``.
+    """
+
+    def __init__(self, status_code: int, text: str) -> None:
+        self.status_code = status_code
+        self.text = text
+
+    def json(self) -> object:
+        return _json.loads(self.text)
+
+
+class _CurlError(httpx.HTTPError):
+    pass
+
+
+def _curl_get(url: str, *, params: dict | None = None) -> _CurlResponse:
+    """GET via the ``curl`` binary instead of httpx.
+
+    BJJFanatics/Shopify sits behind Cloudflare bot management, which
+    fingerprints the TLS/HTTP2 ClientHello (JA3/JA4) — not just HTTP
+    headers. Verified directly on the deploy host: curl and httpx,
+    same container, same egress IP, same User-Agent — curl gets 200,
+    httpx gets 429. Shelling out to curl sidesteps httpx/httpcore's
+    fingerprint entirely since curl is what Cloudflare is allowlisting.
+    """
+    full_url = url
+    if params:
+        from urllib.parse import urlencode
+
+        full_url = f"{url}?{urlencode(params)}"
+
+    cmd = ["curl", "-sS", "-L", "--max-time", str(int(_TIMEOUT_S)), "-w", "\n__HTTP_STATUS__:%{http_code}"]
+    for key, value in _BROWSER_HEADERS.items():
+        cmd += ["-H", f"{key}: {value}"]
+    cmd.append(full_url)
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_TIMEOUT_S + 5
+        )
+    except subprocess.TimeoutExpired as e:
+        raise httpx.TimeoutException(f"curl timed out for {url}") from e
+
+    if result.returncode != 0:
+        raise _CurlError(f"curl exited {result.returncode} for {url}: {result.stderr.strip()}")
+
+    stdout = result.stdout
+    marker = "\n__HTTP_STATUS__:"
+    idx = stdout.rfind(marker)
+    if idx == -1:
+        raise _CurlError(f"curl output missing status marker for {url}")
+    body = stdout[:idx]
+    status_str = stdout[idx + len(marker):].strip()
+    try:
+        status_code = int(status_str)
+    except ValueError as e:
+        raise _CurlError(f"curl returned non-numeric status {status_str!r} for {url}") from e
+
+    return _CurlResponse(status_code=status_code, text=body)
+
+
 def _http_get_with_retry(
     client: httpx.Client, url: str, *, params: dict | None = None
-) -> httpx.Response:
+) -> httpx.Response | _CurlResponse:
     """GET with exponential backoff on timeouts and 5xx. Raises last error.
 
     Deliberately does NOT retry on 429: BJJFanatics/Shopify's WAF issues
     429 as a bot-detection signal, not a transient capacity limit —
     hammering it with retries only reinforces that signal and delays
     surfacing the real error to the user. Callers see 429 immediately.
+
+    Requests to bjjfanatics.com are routed through curl (see
+    ``_curl_get``) rather than the passed-in httpx client, to avoid
+    Cloudflare's TLS fingerprint block on httpx. ``client`` is still
+    used for non-bjjfanatics.com URLs (the search API).
     """
-    if "bjjfanatics.com" in url:
+    use_curl = "bjjfanatics.com" in url
+    if use_curl:
         _wait_for_rate_limit_slot()
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            resp = client.get(url, params=params)
+            resp = _curl_get(url, params=params) if use_curl else client.get(url, params=params)
             if resp.status_code < 500:
                 return resp
-            last_exc = httpx.HTTPStatusError(
-                f"server returned {resp.status_code}",
-                request=resp.request,
-                response=resp,
-            )
+            last_exc = _CurlError(f"server returned {resp.status_code}")
         except httpx.TimeoutException as e:
             last_exc = e
         except httpx.HTTPError as e:

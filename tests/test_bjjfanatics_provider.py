@@ -50,6 +50,15 @@ def _patch_get(monkeypatch, response: _FakeResponse) -> None:
     monkeypatch.setattr(httpx.Client, "get", fake_get)
 
 
+def _patch_curl_get(monkeypatch, response: _FakeResponse) -> None:
+    """bjjfanatics.com requests go through curl subprocess, not httpx."""
+
+    def fake_curl_get(url, *args, **kwargs):  # noqa: ARG001
+        return response
+
+    monkeypatch.setattr(bjjfanatics, "_curl_get", fake_curl_get)
+
+
 # ---------------------------------------------------------------- tests
 def test_parse_time_variants() -> None:
     assert _parse_time("0") == 0
@@ -65,7 +74,7 @@ def test_parse_range_variants() -> None:
 
 def test_scrape_tripod(monkeypatch) -> None:
     html = (FIXTURES / "bjjfanatics_tripod.html").read_text(encoding="utf-8")
-    _patch_get(monkeypatch, _FakeResponse(text=html, status_code=200))
+    _patch_curl_get(monkeypatch, _FakeResponse(text=html, status_code=200))
 
     provider = BJJFanaticsProvider()
     result = provider.scrape(
@@ -95,7 +104,7 @@ def test_scrape_missing_course_content_raises(monkeypatch) -> None:
         "<p>No course content here.</p>"
         "</body></html>"
     )
-    _patch_get(monkeypatch, _FakeResponse(text=html, status_code=200))
+    _patch_curl_get(monkeypatch, _FakeResponse(text=html, status_code=200))
 
     provider = BJJFanaticsProvider()
     with pytest.raises(HTMLChangedError):
