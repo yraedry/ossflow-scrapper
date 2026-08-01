@@ -23,6 +23,23 @@ _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+# Headers beyond User-Agent that a real browser always sends. Shopify's
+# bot/WAF layer (the one issuing HTTP 429 here) scores requests missing
+# these as automated traffic, independent of rate — so a bare UA can get
+# 429'd on the very first request. Also used as a base for the session
+# that shares cookies between search and scrape (see ``_new_session``).
+_BROWSER_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Referer": "https://bjjfanatics.com/",
+}
 _TIMEOUT_S = 15.0
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_S = 1.0
@@ -31,21 +48,19 @@ _BACKOFF_BASE_S = 1.0
 def _http_get_with_retry(
     client: httpx.Client, url: str, *, params: dict | None = None
 ) -> httpx.Response:
-    """GET with exponential backoff on timeouts, 429 and 5xx.
+    """GET with exponential backoff on timeouts and 5xx. Raises last error.
 
-    On 429, honors ``Retry-After`` (seconds or HTTP-date) when present,
-    falling back to the exponential backoff otherwise. Returns the last
-    response as-is (without raising) if all attempts are exhausted, so
-    callers keep surfacing the real status code to the user.
+    Deliberately does NOT retry on 429: BJJFanatics/Shopify's WAF issues
+    429 as a bot-detection signal, not a transient capacity limit —
+    hammering it with retries only reinforces that signal and delays
+    surfacing the real error to the user. Callers see 429 immediately.
     """
     last_exc: Exception | None = None
-    last_resp: httpx.Response | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             resp = client.get(url, params=params)
-            if resp.status_code < 500 and resp.status_code != 429:
+            if resp.status_code < 500:
                 return resp
-            last_resp = resp
             last_exc = httpx.HTTPStatusError(
                 f"server returned {resp.status_code}",
                 request=resp.request,
@@ -58,28 +73,12 @@ def _http_get_with_retry(
             break
         if attempt < _MAX_ATTEMPTS:
             sleep_s = _BACKOFF_BASE_S * (2 ** (attempt - 1))
-            if last_resp is not None and last_resp.status_code == 429:
-                retry_after = _parse_retry_after(last_resp.headers.get("Retry-After"))
-                if retry_after is not None:
-                    sleep_s = retry_after
             logger.warning(
                 "GET %s attempt %d/%d failed (%s); retrying in %.1fs",
                 url, attempt, _MAX_ATTEMPTS, type(last_exc).__name__, sleep_s,
             )
             time.sleep(sleep_s)
-    if last_resp is not None:
-        return last_resp
     raise last_exc  # type: ignore[misc]
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    """Parse ``Retry-After`` as delay-seconds. HTTP-date form is ignored."""
-    if not value:
-        return None
-    try:
-        return max(0.0, float(value.strip()))
-    except ValueError:
-        return None
 _SEARCH_ENDPOINT = (
     "https://bjjfanatics-msigw.ondigitalocean.app/v4/products/search"
 )
@@ -288,9 +287,18 @@ class BJJFanaticsProvider:
         try:
             with httpx.Client(
                 timeout=_TIMEOUT_S,
-                headers={"User-Agent": _USER_AGENT},
+                headers=_BROWSER_HEADERS,
                 follow_redirects=True,
             ) as client:
+                # Prime session cookies by visiting the homepage first, like
+                # a real browser landing on the site before clicking into a
+                # product. Shopify's bot-detection weighs a cookie-less
+                # direct hit to a product page heavily; best-effort only —
+                # if this fails we still try the real request.
+                try:
+                    client.get("https://bjjfanatics.com/")
+                except httpx.HTTPError:
+                    pass
                 resp = _http_get_with_retry(client, url)
         except httpx.TimeoutException as e:
             raise ProviderTimeoutError(
@@ -303,8 +311,9 @@ class BJJFanaticsProvider:
 
         if resp.status_code == 429:
             raise ProviderScrapeError(
-                f"scrape {url} returned HTTP 429 (rate limited by bjjfanatics.com "
-                f"after {_MAX_ATTEMPTS} attempts) - wait and retry later"
+                f"scrape {url} returned HTTP 429 - rate limited/blocked by "
+                f"bjjfanatics.com's bot protection; wait a while before "
+                f"retrying"
             )
         if resp.status_code >= 400:
             raise ProviderScrapeError(
