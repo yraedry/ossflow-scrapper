@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from scrapper.errors import HTMLChangedError
+from scrapper.providers import bjjfanatics
 from scrapper.providers.bjjfanatics import (
     BJJFanaticsProvider,
     _parse_range,
@@ -14,6 +15,14 @@ from scrapper.providers.bjjfanatics import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit_cooldown(monkeypatch):
+    """Tests hit the (mocked) bjjfanatics.com client repeatedly; the real
+    10s cooldown between requests would make the suite take minutes."""
+    monkeypatch.setattr(bjjfanatics, "_RATE_LIMIT_COOLDOWN_S", 0.0)
+    monkeypatch.setattr(bjjfanatics, "_last_request_at", None)
 
 
 # ---------------------------------------------------------------- helpers

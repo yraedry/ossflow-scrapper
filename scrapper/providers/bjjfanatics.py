@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from difflib import SequenceMatcher
 from typing import Optional
@@ -19,15 +20,37 @@ from ..models import Candidate, ScrapeChapter, ScrapeResult, ScrapeVolume
 
 logger = logging.getLogger(__name__)
 
+# Process-wide cooldown between requests to bjjfanatics.com. Consecutive
+# scrapes in quick succession trip its rate limiter (HTTP 429) even with
+# browser-like headers — this isn't bot-fingerprint detection, it's a
+# request-volume limit.
+_RATE_LIMIT_COOLDOWN_S = 10.0
+_rate_limit_lock = threading.Lock()
+_last_request_at: float | None = None
+
+
+def _wait_for_rate_limit_slot() -> None:
+    global _last_request_at
+    with _rate_limit_lock:
+        now = time.monotonic()
+        if _last_request_at is not None:
+            elapsed = now - _last_request_at
+            remaining = _RATE_LIMIT_COOLDOWN_S - elapsed
+            if remaining > 0:
+                logger.info(
+                    "bjjfanatics.com cooldown: waiting %.1fs before next request",
+                    remaining,
+                )
+                time.sleep(remaining)
+        _last_request_at = time.monotonic()
+
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 # Headers beyond User-Agent that a real browser always sends. Shopify's
 # bot/WAF layer (the one issuing HTTP 429 here) scores requests missing
-# these as automated traffic, independent of rate — so a bare UA can get
-# 429'd on the very first request. Also used as a base for the session
-# that shares cookies between search and scrape (see ``_new_session``).
+# these as automated traffic, independent of rate.
 _BROWSER_HEADERS = {
     "User-Agent": _USER_AGENT,
     "Accept": (
@@ -55,6 +78,8 @@ def _http_get_with_retry(
     hammering it with retries only reinforces that signal and delays
     surfacing the real error to the user. Callers see 429 immediately.
     """
+    if "bjjfanatics.com" in url:
+        _wait_for_rate_limit_slot()
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
@@ -290,15 +315,6 @@ class BJJFanaticsProvider:
                 headers=_BROWSER_HEADERS,
                 follow_redirects=True,
             ) as client:
-                # Prime session cookies by visiting the homepage first, like
-                # a real browser landing on the site before clicking into a
-                # product. Shopify's bot-detection weighs a cookie-less
-                # direct hit to a product page heavily; best-effort only —
-                # if this fails we still try the real request.
-                try:
-                    client.get("https://bjjfanatics.com/")
-                except httpx.HTTPError:
-                    pass
                 resp = _http_get_with_retry(client, url)
         except httpx.TimeoutException as e:
             raise ProviderTimeoutError(
